@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
     world_grid = obs["image"]
     print("World grid:")
-    pprint(world_grid[:, :, 0])
+    pprint(np.transpose(world_grid[:, :, 0]))
 
     # obs, *_ = env.step(env.actions.left)
     # world_grid = obs["image"]
@@ -97,6 +97,6 @@ if __name__ == "__main__":
     # pprint('World grid after moving forward:')
     # pprint(world_grid[:, :, 0])
 
-    dist_to_goal = dijkstra(world_grid)
-    pprint("Distance to goal:")
-    pprint(dist_to_goal)
+    # dist_to_goal = dijkstra(world_grid)
+    # pprint("Distance to goal:")
+    # pprint(dist_to_goal)
