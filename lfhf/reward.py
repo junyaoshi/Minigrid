@@ -120,6 +120,11 @@ def print_dist_to_goal(dist_to_goal):
     pprint(np.transpose(np.mean(dist_to_goal, axis=2).round(1)))
 
 
+def get_reward(world_grid, state, next_state):
+    """Get the reward for the given state->next_state transition."""
+    return dist_to_goal[next_state] - dist_to_goal[state]
+
+
 if __name__ == "__main__":
     np.set_printoptions(linewidth=200)
 
