@@ -1,34 +1,14 @@
 from pprint import pprint
 import heapq
-from PIL import Image
 
 import numpy as np
 import gymnasium as gym
 from tqdm.auto import tqdm
 
 from minigrid.minigrid_env import MiniGridEnv
-from minigrid.wrappers import FullyObsWrapper
-from minigrid.core.constants import OBJECT_TO_IDX
 
-
-"""
-> The integer values to which the agent's direction is encoded are:
-> 
-> - `0`: East
-> - `1`: South
-> - `2`: West
-> - `3`: North
-
-> World grid encoding:
-world_grid[x_pos, y_pos] = [
-    OBJECT_TO_IDX[object_type], 
-    COLOR_TO_IDX[object_color], 
-    agent direction / objectstate
-]
-"""
-N_DIRS = 4
-EAST, SOUTH, WEST, NORTH = range(N_DIRS)
-WALL = OBJECT_TO_IDX["wall"]
+from utils import WALL, EAST, SOUTH, WEST, NORTH, GOAL, DIRS, N_DIRS
+from utils import print_dist_to_goal, print_world_grid
 
 
 def find_goal_states(world_grid):
@@ -37,11 +17,11 @@ def find_goal_states(world_grid):
     goal_x, goal_y = None, None
     for i in range(width):
         for j in range(height):
-            if world_grid[i, j, 0] == OBJECT_TO_IDX["goal"]:
+            if world_grid[i, j, 0] == GOAL:
                 goal_x, goal_y = i, j
 
     assert goal_x is not None and goal_y is not None
-    goal_states = [(goal_x, goal_y, dir) for dir in range(N_DIRS)]
+    goal_states = [(goal_x, goal_y, dir) for dir in DIRS]
     return goal_states
 
 
@@ -59,15 +39,15 @@ def get_neighbors(world_grid, state):
     # turn right
     neighbors.append((x, y, dir + 1 if dir < 3 else 0))
 
-    # move forward
-    if dir == EAST and world_grid[x + 1, y, 0] != WALL:
-        neighbors.append((x + 1, y, dir))
-    elif dir == SOUTH and world_grid[x, y + 1, 0] != WALL:
-        neighbors.append((x, y + 1, dir))
-    elif dir == WEST and world_grid[x - 1, y, 0] != WALL:
+    # move backward
+    if dir == EAST and world_grid[x - 1, y, 0] != WALL:
         neighbors.append((x - 1, y, dir))
-    elif dir == NORTH and world_grid[x, y - 1, 0] != WALL:
+    elif dir == SOUTH and world_grid[x, y - 1, 0] != WALL:
         neighbors.append((x, y - 1, dir))
+    elif dir == WEST and world_grid[x + 1, y, 0] != WALL:
+        neighbors.append((x + 1, y, dir))
+    elif dir == NORTH and world_grid[x, y + 1, 0] != WALL:
+        neighbors.append((x, y + 1, dir))
 
     return neighbors
 
@@ -104,32 +84,19 @@ def dijkstra(world_grid):
     return dist_to_goal
 
 
-def print_world_grid(world_grid):
-    """Prints the world grid in a readable format.
-    Using transpose because np array's indexing is [row, col] and we want [x, y].
-    """
-    print("World grid:")
-    pprint(np.transpose(world_grid[:, :, 0]))
-
-
-def print_dist_to_goal(dist_to_goal):
-    """Prints the distance to goal in a readable format.
-    Using transpose because np array's indexing is [row, col] and we want [x, y].
-    """
-    print("Distance to goal:")
-    pprint(np.transpose(np.mean(dist_to_goal, axis=2).round(1)))
-
-
-def get_reward(world_grid, state, next_state):
+def compute_reward(dist_to_goal, state, next_state):
     """Get the reward for the given state->next_state transition."""
-    return dist_to_goal[next_state] - dist_to_goal[state]
+    return dist_to_goal[state] - dist_to_goal[next_state]
 
 
 if __name__ == "__main__":
+    from PIL import Image
+    from minigrid.wrappers import FullyObsWrapper
+
     np.set_printoptions(linewidth=200)
 
-    env_name = "MiniGrid-FourRooms-v0"
-    # env_name = "MiniGrid-Empty-5x5-v0"
+    # env_name = "MiniGrid-FourRooms-v0"
+    env_name = "MiniGrid-Empty-5x5-v0"
     # env_name = "MiniGrid-Empty-8x8-v0"
     # env_name = "MiniGrid-Empty-Random-5x5-v0"
 
@@ -155,3 +122,15 @@ if __name__ == "__main__":
 
     dist_to_goal = dijkstra(world_grid)
     print_dist_to_goal(dist_to_goal)
+
+    print('East: ')
+    print(np.transpose(dist_to_goal[:, :, EAST]))
+
+    print('South: ')
+    print(np.transpose(dist_to_goal[:, :, SOUTH]))
+    
+    print('West: ')
+    print(np.transpose(dist_to_goal[:, :, WEST]))
+
+    print('North: ')
+    print(np.transpose(dist_to_goal[:, :, NORTH]))
