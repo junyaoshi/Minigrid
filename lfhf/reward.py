@@ -6,8 +6,9 @@ import gymnasium as gym
 from tqdm.auto import tqdm
 
 from minigrid.minigrid_env import MiniGridEnv
+from minigrid.wrappers import FullyObsWrapper
 
-from utils import WALL, EAST, SOUTH, WEST, NORTH, GOAL, DIRS, N_DIRS
+from utils import WALL, EAST, SOUTH, WEST, NORTH, GOAL, DIRS, N_DIRS, ACTIONS
 from utils import print_dist_to_goal, print_world_grid
 
 
@@ -89,10 +90,46 @@ def compute_reward(dist_to_goal, state, next_state):
     return dist_to_goal[state] - dist_to_goal[next_state]
 
 
+def get_all_reward_samples(env_name, dist_to_goal):
+    """Get all the possible reward samples from the environment."""
+    env: MiniGridEnv = gym.make(env_name, render_mode="rgb_array")
+    env = FullyObsWrapper(env)
+    obs, _ = env.reset()
+    world_grid = obs["image"]
+    goal_states = find_goal_states(world_grid)
+
+    print("Getting all reward samples.")
+    reward_samples = []
+    for x in tqdm(range(env.width), leave=True):
+        for y in tqdm(range(env.height), leave=False):
+            if world_grid[x, y, 0] == WALL:
+                continue
+
+            for dir in DIRS:
+                state = (x, y, dir)
+                if state in goal_states:
+                    continue
+
+                for action in ACTIONS:
+                    temp_env: MiniGridEnv = gym.make(
+                        env_name,
+                        agent_start_pos=(x, y),
+                        agent_start_dir=dir,
+                        render_mode="rgb_array",
+                    )
+                    temp_env = FullyObsWrapper(temp_env)
+                    temp_env.reset()
+                    temp_env.step(action)
+
+                    next_state = (*temp_env.agent_pos, temp_env.agent_dir)
+                    reward = compute_reward(dist_to_goal, state, next_state)
+                    reward_samples.append(reward)
+
+    return np.array(reward_samples)
+
+
 if __name__ == "__main__":
     from PIL import Image
-    from minigrid.wrappers import FullyObsWrapper
-
     np.set_printoptions(linewidth=200)
 
     # env_name = "MiniGrid-FourRooms-v0"
@@ -110,27 +147,17 @@ if __name__ == "__main__":
     world_grid = obs["image"]
     print_world_grid(world_grid)
 
-    # obs, *_ = env.step(env.actions.left)
-    # world_grid = obs["image"]
-    # pprint('World grid after moving left:')
-    # pprint(world_grid[:, :, 0])
-
-    # obs, *_ = env.step(env.actions.forward)
-    # world_grid = obs["image"]
-    # pprint('World grid after moving forward:')
-    # pprint(world_grid[:, :, 0])
-
     dist_to_goal = dijkstra(world_grid)
     print_dist_to_goal(dist_to_goal)
 
-    print('East: ')
+    print("East: ")
     print(np.transpose(dist_to_goal[:, :, EAST]))
 
-    print('South: ')
+    print("South: ")
     print(np.transpose(dist_to_goal[:, :, SOUTH]))
-    
-    print('West: ')
+
+    print("West: ")
     print(np.transpose(dist_to_goal[:, :, WEST]))
 
-    print('North: ')
+    print("North: ")
     print(np.transpose(dist_to_goal[:, :, NORTH]))
