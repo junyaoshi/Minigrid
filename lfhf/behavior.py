@@ -4,7 +4,7 @@ import gymnasium as gym
 from minigrid.minigrid_env import MiniGridEnv
 
 
-from utils import WALL, N_DIRS, ACTIONS, N_ACTIONS
+from utils import WALL, GOAL, N_DIRS, ACTIONS, N_ACTIONS
 
 
 def random_action():
@@ -14,10 +14,18 @@ def random_action():
 def compute_coverage(world_grid, visited):
     assert isinstance(visited, set)
     total = (
-        len([cell for row in world_grid for cell in row if cell[0] != WALL])
+        len(
+            [
+                cell[0]
+                for row in world_grid
+                for cell in row
+                if cell[0] != WALL and cell[0] != GOAL
+            ]
+        )
         * N_DIRS
         * N_ACTIONS
     )
+    assert len(visited) <= total, "more visited states than possible states"
     return len(visited) / total
 
 
