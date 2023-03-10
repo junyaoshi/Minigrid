@@ -27,3 +27,4 @@ venv
 # lfhf
 *.jpg
 *.png
+results/
