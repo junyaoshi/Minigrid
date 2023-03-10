@@ -19,8 +19,10 @@ world_grid[x_pos, y_pos] = [
 ]
 """
 from pprint import pprint
+import argparse
 
 import numpy as np
+from scipy.special import rel_entr
 
 from minigrid.core.constants import OBJECT_TO_IDX
 
@@ -50,6 +52,34 @@ def print_dist_to_goal(dist_to_goal):
     """
     print("Distance to goal:")
     pprint(np.transpose(np.mean(dist_to_goal, axis=2).round(1)))
+
+
+def kl_divergence(samples, ground_truth):
+    """Computes the KL divergence between two sets of samples.
+    Args:
+        samples (np.ndarray): random samples.
+        ground_truth (np.ndarray): all ground truth samples.
+    Returns:
+        float: KL divergence between the two distributions.
+    """
+    gt_classes, gt_counts = np.unique(ground_truth, return_counts=True)
+    gt_probs = gt_counts / len(ground_truth)
+    sample_probs = np.array(
+        [np.count_nonzero(samples == c) / len(samples) for c in gt_classes]
+    )
+    return sum(rel_entr(sample_probs, gt_probs))
+
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    elif v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected.")
+
 
 if __name__ == "__main__":
     pass
