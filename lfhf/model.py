@@ -4,6 +4,10 @@ https://towardsdatascience.com/
 predicting-probability-distributions-using-neural-networks-abef7db10eac
 """
 
+import math
+
+from tqdm.auto import tqdm
+import torch
 from torch import nn
 
 BN_TRACK_STATS = True
@@ -130,6 +134,75 @@ class EndtoEndNet(nn.Module):
             return mean, logvar
         else:
             return z
+
+
+def train_model(reward_data, feedback_data, all_reward, all_feedback, args, writer):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    reward_data = torch.from_numpy(reward_data).unsqueeze(1).float().to(device)
+    feedback_data = torch.from_numpy(feedback_data).unsqueeze(1).float().to(device)
+    all_reward = torch.from_numpy(all_reward).float().unsqueeze(1).to(device)
+    all_feedback = torch.from_numpy(all_feedback).unsqueeze(1).float().to(device)
+
+    bsize = args.batch_size
+    train_n_batches = math.ceil(len(reward_data) / bsize)
+    test_n_batches = math.ceil(len(all_reward) / bsize)
+    global_step = 0
+
+    model = EndtoEndNet(1, 1, args.n_blocks, residual=args.residual, density=False)
+    model.to(device)
+
+    criterion = nn.MSELoss()
+    optimzier = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    for epoch in tqdm(range(args.n_epochs), desc="Training Epochs", leave=True):
+        # Train
+        model.train()
+        train_r_pred = torch.empty((0, 1), device=device)
+        test_r_pred = torch.empty((0, 1), device=device)
+        for batch in tqdm(
+            range(train_n_batches), desc=f"epoch={epoch} train", leave=False
+        ):
+            start = batch * bsize
+            end = start + bsize
+            if end > len(reward_data):
+                end = len(reward_data)
+            r = reward_data[start:end]
+            f = feedback_data[start:end]
+
+            optimzier.zero_grad()
+            r_pred = model(f)
+            loss = criterion(r_pred, r)
+
+            loss.backward()
+            optimzier.step()
+
+            train_r_pred = torch.cat((train_r_pred, r_pred.detach()), dim=0)
+            writer.add_scalar("train/loss", loss.item(), global_step)
+            global_step += 1
+
+        # Test
+        model.eval()
+        with torch.no_grad():
+            for batch in tqdm(
+                range(test_n_batches), desc=f"epoch={epoch} test", leave=False
+            ):
+                start = batch * bsize
+                end = start + bsize
+                if end > len(all_reward):
+                    end = len(all_reward)
+                r = all_reward[start:end]
+                f = all_feedback[start:end]
+
+                r_pred = model(f)
+                loss = criterion(r_pred, r)
+
+                test_r_pred = torch.cat((test_r_pred, r_pred), dim=0)
+                writer.add_scalar("test/loss", loss.item(), global_step)
+
+        writer.add_histogram("reward/reward_data_pred", train_r_pred, global_step)
+        writer.add_histogram("reward/all_reward_pred", test_r_pred, global_step)
+
+    return model
 
 
 if __name__ == "__main__":
