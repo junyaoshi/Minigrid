@@ -137,7 +137,7 @@ class EndtoEndNet(nn.Module):
 
 
 def train_model(reward_data, feedback_data, all_reward, all_feedback, args, writer):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = args.device
     reward_data = torch.from_numpy(reward_data).unsqueeze(1).float().to(device)
     feedback_data = torch.from_numpy(feedback_data).unsqueeze(1).float().to(device)
     all_reward = torch.from_numpy(all_reward).float().unsqueeze(1).to(device)

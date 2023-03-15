@@ -25,6 +25,7 @@ import numpy as np
 from scipy.special import rel_entr
 
 from minigrid.core.constants import OBJECT_TO_IDX
+from minigrid.minigrid_env import MiniGridEnv
 
 N_DIRS = 4
 EAST, SOUTH, WEST, NORTH = range(N_DIRS)
@@ -79,6 +80,18 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
+    
+
+def get_agent_state(env: MiniGridEnv):
+    """Get the agent's state in the world grid."""
+    return (*env.agent_pos, env.agent_dir)
+
+
+def reset_env(env: MiniGridEnv, seed):
+    """Reset the environment and return the initial state."""
+    obs, _ = env.reset(seed=seed)
+    env.place_agent()
+    return obs
 
 
 if __name__ == "__main__":

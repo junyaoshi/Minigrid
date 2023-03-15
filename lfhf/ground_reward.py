@@ -5,6 +5,7 @@ from PIL import Image
 import numpy as np
 import gymnasium as gym
 from torch.utils.tensorboard import SummaryWriter
+import torch
 
 from minigrid.minigrid_env import MiniGridEnv
 from minigrid.wrappers import FullyObsWrapper
@@ -14,6 +15,7 @@ from behavior import random_action, compute_coverage
 from reward import dijkstra, compute_reward, get_all_reward_samples
 from utils import print_world_grid, print_dist_to_goal, kl_divergence, str2bool
 from model import train_model
+from q_learning import q_learning_from_reward_model, q_learning_from_env_reward
 
 
 def parse_args():
@@ -37,6 +39,28 @@ def parse_args():
     )
     parser.add_argument("--residual", type=str2bool, default=True)
 
+    # q-learning
+    parser.add_argument(
+        "--downstream_envs",
+        nargs="+",
+        default=[
+            "MiniGrid-Empty-5x5-v0",
+            "MiniGrid-Empty-8x8-v0",
+            "MiniGrid-FourRooms-v0",
+        ],
+    )
+    parser.add_argument("--n_episodes", type=int, default=100)
+    parser.add_argument("--epsilon", type=float, default=1.0)
+    parser.add_argument("--epsilon_min", type=float, default=0.1)
+    parser.add_argument(
+        "--epsilon_linear_decay",
+        type=str2bool,
+        default=True,
+        help="if true, epsilon decays linearly to epsilon_min, else stays constant",
+    )
+    parser.add_argument("--gamma", type=float, default=0.95)
+    parser.add_argument("--alpha", type=float, default=0.1)
+
     args = parser.parse_args()
     return args
 
@@ -48,7 +72,6 @@ def generate_samples(env: MiniGridEnv, args, world_grid, dist_to_goal):
     for _ in range(args.n_probe_samples):
         action = random_action()
         state = (*env.agent_pos, env.agent_dir)
-
         visited.add((state, action))
 
         *_, terminated, truncated, _ = env.step(action)
@@ -66,27 +89,32 @@ def generate_samples(env: MiniGridEnv, args, world_grid, dist_to_goal):
 
 
 def main(args):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    args.device = device
+    args.log_dir = f"results/probe={args.probe_env}_samples={args.n_probe_samples}"
+    args.log_dir += f"_noise={args.noise}"
     writer = SummaryWriter(args.log_dir)
 
     # log args
     pprint(f"args: \n{args}")
     for arg in vars(args):
         writer.add_text(f"args/{str(arg)}", str(getattr(args, arg)))
-    writer = writer
 
     env: MiniGridEnv = gym.make(args.probe_env, render_mode="rgb_array")
     env = FullyObsWrapper(env)
     obs, _ = env.reset()
 
     # visualize environment
+    writer.add_image("probe_env/initial_world", env.render(), dataformats="HWC")
     world_grid = obs["image"]
+    print(f"Probe env: {args.probe_env}")
     print_world_grid(world_grid)
-    Image.fromarray(env.render()).save("obs.jpg")
 
-    # generate reward and feedback samples and ground truth
+    # generate dense reward function
     dist_to_goal = dijkstra(world_grid)
     print_dist_to_goal(dist_to_goal)
 
+    # generate reward and feedback samples
     all_reward = get_all_reward_samples(args.probe_env, dist_to_goal)
     np.random.shuffle(all_reward)
     all_feedback = noisy_sigmoid_feedback(all_reward, args.noise)
@@ -111,10 +139,14 @@ def main(args):
         reward_data, feedback_data, all_reward, all_feedback, args, writer
     )
 
+    for downstream_env in args.downstream_envs:
+        seed = np.random.randint(0, 500)
+        q_learning_from_reward_model(downstream_env, model, args, writer, seed)
+        q_learning_from_env_reward(downstream_env, args, writer, seed)
+
 
 if __name__ == "__main__":
     args = parse_args()
     main(args)
     from time import sleep
-
     sleep(0.5)
