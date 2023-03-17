@@ -12,8 +12,15 @@ from minigrid.wrappers import FullyObsWrapper
 from minigrid.core.constants import OBJECT_TO_IDX
 from minigrid.utils.window import Window
 
-from utils import print_world_grid, print_dist_to_goal, get_agent_state, reset_env
-from utils import N_DIRS, N_ACTIONS
+from utils import (
+    print_world_grid,
+    print_dist_to_goal,
+    get_agent_state,
+    reset_env,
+    hwc2chw,
+    N_DIRS,
+    N_ACTIONS,
+)
 from reward import dijkstra, compute_reward
 from behavior import random_action
 from feedback import noisy_sigmoid_feedback
@@ -90,11 +97,26 @@ def visualize_Q(Q):
     Q_2d = np.transpose(np.mean(np.max(Q, axis=3), axis=2))
     im = ax.matshow(Q_2d)
     fig.colorbar(im)
-    # for i in range(Q_2d.shape[0]):
-    #     for j in range(Q_2d.shape[1]):
-    #         ax.text(i, j, str(round(Q_2d[i, j])), va='center', ha='center', fontsize=5)
-
     return fig
+
+
+def visualize_policy(env: MiniGridEnv, Q, seed):
+    """Visualize policy."""
+    vid_array = [hwc2chw(env.render())]
+    terminated, truncated = False, False
+    pbar = tqdm(total=env.max_steps, desc="Visualize Policy Step", leave=False)
+    while not (terminated or truncated):
+        state = get_agent_state(env)
+        action = choose_optimal_action(Q, state)
+        *_, terminated, truncated, _ = env.step(action)
+        vid_array.append(hwc2chw(env.render()))
+        pbar.update(1)
+
+    reset_env(env, seed)
+    pbar.close()
+
+    vid_array = np.stack(vid_array, axis=0)
+    return torch.from_numpy(vid_array)
 
 
 def q_learning_from_reward_model_episode(
@@ -203,6 +225,10 @@ def q_learning_from_reward_model(env_name, model, args, writer, seed):
         )
         writer.add_figure(f"{env_name}/learn_from_feedback_Q", fig, episode)
         plt.close(fig)
+    
+    # visualize policy
+    vid_tensor = visualize_policy(env, Q, seed)[np.newaxis, :]
+    writer.add_video(f"{env_name}/learn_from_feedback_policy", vid_tensor)
 
 
 def q_learning_from_env_reward(env_name, args, writer, seed):

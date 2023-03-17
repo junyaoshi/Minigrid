@@ -94,5 +94,10 @@ def reset_env(env: MiniGridEnv, seed):
     return obs
 
 
+def hwc2chw(img):
+    """Converts an image from HWC to CHW format."""
+    return np.transpose(img, axes=(2, 0, 1))
+
+
 if __name__ == "__main__":
     pass
