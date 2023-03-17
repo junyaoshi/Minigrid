@@ -21,7 +21,8 @@ from q_learning import q_learning_from_reward_model, q_learning_from_env_reward
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--log_dir", type=str, default="results/test")
+    parser.add_argument("--log_dir", type=str, default="results/debug")
+    parser.add_argument("--debug", type=str2bool, default=True)
 
     # probe env
     parser.add_argument("--probe_env", type=str, default="MiniGrid-Empty-5x5-v0")
@@ -91,8 +92,9 @@ def generate_samples(env: MiniGridEnv, args, world_grid, dist_to_goal):
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
-    args.log_dir = f"results/probe={args.probe_env}_samples={args.n_probe_samples}"
-    args.log_dir += f"_noise={args.noise}"
+    if not args.debug:
+        args.log_dir = f"results/probe={args.probe_env}_samples={args.n_probe_samples}"
+        args.log_dir += f"_noise={args.noise}"
     writer = SummaryWriter(args.log_dir)
 
     # log args
@@ -149,4 +151,5 @@ if __name__ == "__main__":
     args = parse_args()
     main(args)
     from time import sleep
+
     sleep(0.5)
