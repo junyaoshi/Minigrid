@@ -19,6 +19,7 @@ from q_learning import (
     q_learning_from_reward_model,
     q_learning_from_env_reward,
     q_learning_from_feedback,
+    q_learning_from_true_reward
 )
 
 
@@ -151,6 +152,7 @@ def main(args):
         q_learning_from_reward_model(downstream_env, model, args, writer, seed)
         q_learning_from_feedback(downstream_env, args, writer, seed)
         q_learning_from_env_reward(downstream_env, args, writer, seed)
+        q_learning_from_true_reward(downstream_env, args, writer, seed)
 
 
 if __name__ == "__main__":

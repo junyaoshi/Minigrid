@@ -149,6 +149,32 @@ def q_learning_from_reward_model_episode(
     return epsilon
 
 
+def q_learning_from_true_reward_episode(
+    env: MiniGridEnv, dist_to_goal, Q, episode, args, seed
+):
+    """Perform one Q-Learning episode
+    where reward is ground truth dense reward"""
+    terminated, truncated = False, False
+    pbar = tqdm(total=env.max_steps, desc="Q-Learning Step", leave=False)
+
+    epsilon = choose_epsilon(args, episode)
+    while not (terminated or truncated):
+        state = get_agent_state(env)
+        action = choose_action(Q, state, epsilon)
+        *_, terminated, truncated, _ = env.step(action)
+        new_state = get_agent_state(env)
+
+        # get true reward and use it directly as reward to update Q
+        true_reward = compute_reward(dist_to_goal, state, new_state)
+        bellman_update(Q, state, true_reward, new_state, action, args.alpha, args.gamma)
+
+        pbar.update(1)
+
+    reset_env(env, seed)
+    pbar.close()
+    return epsilon
+
+
 def q_learning_from_feedback_episode(
     env: MiniGridEnv, dist_to_goal, Q, episode, args, seed
 ):
@@ -228,7 +254,7 @@ def q_learning_from_reward_model(env_name, model, args, writer, seed):
         f"{env_name}/learn_from_model_world", env.render(), dataformats="HWC"
     )
     world_grid = obs["image"]
-    print(f"Learn from reward downstream env: {env_name}")
+    print(f"Learn from reward model downstream env: {env_name}")
     print_world_grid(world_grid)
 
     # get ground truth dense reward function
@@ -257,6 +283,43 @@ def q_learning_from_reward_model(env_name, model, args, writer, seed):
     # visualize policy
     vid_tensor = visualize_policy(env, Q, seed)[np.newaxis, :]
     writer.add_video(f"{env_name}/learn_from_model_policy", vid_tensor)
+
+
+def q_learning_from_true_reward(env_name, args, writer, seed):
+    """Q-Learning where reward comes from ground truth dense reward"""
+    # initialize environment
+    env: MiniGridEnv = gym.make(env_name, render_mode="rgb_array")
+    env = FullyObsWrapper(env)
+    obs = reset_env(env, seed)
+    writer.add_image(
+        f"{env_name}/learn_from_true_world", env.render(), dataformats="HWC"
+    )
+    world_grid = obs["image"]
+    print(f"Learn from true reward downstream env: {env_name}")
+    print_world_grid(world_grid)
+
+    # get ground truth dense reward function
+    dist_to_goal = dijkstra(world_grid)
+    print_dist_to_goal(dist_to_goal)
+
+    Q = np.zeros((env.width, env.height, N_DIRS, N_ACTIONS))
+    for episode in tqdm(
+        range(args.n_episodes), desc="Q-Learning from True Reward Episode"
+    ):
+        epsilon = q_learning_from_true_reward_episode(env, dist_to_goal, Q, episode, args, seed)
+        cumulative_env_reward = q_learning_eval_episode(env, Q, seed)
+        fig = visualize_Q(Q)
+
+        writer.add_scalar(f"{env_name}/learn_from_true_epsilon", epsilon, episode)
+        writer.add_scalar(
+            f"{env_name}/learn_from_true_reward", cumulative_env_reward, episode
+        )
+        writer.add_figure(f"{env_name}/learn_from_true_Q", fig, episode)
+        plt.close(fig)
+
+    # visualize policy
+    vid_tensor = visualize_policy(env, Q, seed)[np.newaxis, :]
+    writer.add_video(f"{env_name}/learn_from_true_policy", vid_tensor)
 
 
 def q_learning_from_feedback(env_name, args, writer, seed):
