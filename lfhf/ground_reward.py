@@ -15,13 +15,18 @@ from behavior import random_action, compute_coverage
 from reward import dijkstra, compute_reward, get_all_reward_samples
 from utils import print_world_grid, print_dist_to_goal, kl_divergence, str2bool
 from model import train_model
-from q_learning import q_learning_from_reward_model, q_learning_from_env_reward
+from q_learning import (
+    q_learning_from_reward_model,
+    q_learning_from_env_reward,
+    q_learning_from_feedback,
+)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--log_dir", type=str, default="results/debug")
+    # run config
+    parser.add_argument("--log_dir", type=str, default="results")
     parser.add_argument("--debug", type=str2bool, default=True)
 
     # probe env
@@ -93,7 +98,7 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
     if not args.debug:
-        args.log_dir = f"results/probe={args.probe_env}_samples={args.n_probe_samples}"
+        args.log_dir = f"{args.log_dir}/probe={args.probe_env}_samples={args.n_probe_samples}"
         args.log_dir += f"_noise={args.noise}"
     writer = SummaryWriter(args.log_dir)
 
@@ -144,6 +149,7 @@ def main(args):
     for downstream_env in args.downstream_envs:
         seed = np.random.randint(0, 500)
         q_learning_from_reward_model(downstream_env, model, args, writer, seed)
+        q_learning_from_feedback(downstream_env, args, writer, seed)
         q_learning_from_env_reward(downstream_env, args, writer, seed)
 
 
