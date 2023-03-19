@@ -6,6 +6,7 @@ import gymnasium as gym
 from tqdm.auto import tqdm
 import torch
 import matplotlib.pyplot as plt
+import matplotlib; matplotlib.use('Agg')
 
 from minigrid.minigrid_env import MiniGridEnv
 from minigrid.wrappers import FullyObsWrapper
@@ -17,6 +18,8 @@ from utils import N_DIRS, N_ACTIONS
 from reward import dijkstra, compute_reward
 from behavior import random_action
 from feedback import noisy_sigmoid_feedback
+from q_iteration import generate_q_table
+
 
 EPSILON = 0.05
 ALPHA = 0.1
@@ -125,6 +128,35 @@ def q_learning_from_reward_model_episode(
     pbar.close()
     return epsilon
 
+def q_learning_from_q_model_episode(
+    env: MiniGridEnv, model, q_ground_truth, Q, episode, args, seed
+):
+    """Perform one Q-Learning episode
+    where reward comes from learned q model"""
+    terminated, truncated = False, False
+    pbar = tqdm(total=env.max_steps, desc="Q-Learning Step", leave=False)
+
+    epsilon = choose_epsilon(args, episode)
+    while not (terminated or truncated):
+        state = get_agent_state(env)
+        action = choose_action(Q, state, epsilon)
+        *_, terminated, truncated, _ = env.step(action)
+        new_state = get_agent_state(env)
+
+        # use reward model to process feedback to get estimated reward and update Q
+        true_q = q_ground_truth[state[0], state[1], state[2], action]
+        feedback = noisy_sigmoid_feedback(true_q, args.noise)
+        feedback = torch.tensor([[feedback]], device=args.device).float()
+        pred_q = model(feedback).item()
+        #bellman_update(Q, state, pred_q, new_state, action, args.alpha, args.gamma)
+        Q[state[0], state[1], state[2], action] = pred_q
+
+        pbar.update(1)
+
+    reset_env(env, seed)
+    pbar.close()
+    return epsilon
+
 
 def q_learning_from_env_reward_episode(env: MiniGridEnv, Q, episode, args, seed):
     """Perform one Q-Learning episode
@@ -146,6 +178,7 @@ def q_learning_from_env_reward_episode(env: MiniGridEnv, Q, episode, args, seed)
     reset_env(env, seed)
     pbar.close()
     return epsilon
+
 
 
 def q_learning_eval_episode(env: MiniGridEnv, Q, seed):
@@ -178,7 +211,7 @@ def q_learning_from_reward_model(env_name, model, args, writer, seed):
         f"{env_name}/learn_from_feedback_world", env.render(), dataformats="HWC"
     )
     world_grid = obs["image"]
-    print(f"Downstream env: {env_name}")
+    print(f"Downstream env: {env_name}, using reward model")
     print_world_grid(world_grid)
 
     # get ground truth dense reward function
@@ -210,12 +243,12 @@ def q_learning_from_env_reward(env_name, args, writer, seed):
     # initialize environment
     env: MiniGridEnv = gym.make(env_name, render_mode="rgb_array")
     env = FullyObsWrapper(env)
-    obs, _ = env.reset()
+    obs = reset_env(env, seed)
     writer.add_image(
         f"{env_name}/learn_from_env_world", env.render(), dataformats="HWC"
     )
     world_grid = obs["image"]
-    print(f"Downstream env: {env_name}")
+    print(f"Downstream env: {env_name}, using env reward")
     print_world_grid(world_grid)
 
     Q = np.zeros((env.width, env.height, N_DIRS, N_ACTIONS))
@@ -233,6 +266,42 @@ def q_learning_from_env_reward(env_name, args, writer, seed):
             episode,
         )
         writer.add_figure(f"{env_name}/learn_from_env_Q", fig, episode)
+        plt.close(fig)
+
+def q_learning_from_q_model(env_name, model, args, writer, seed):
+    """Q-Learning where reward comes from learned reward model
+    r = model(feedback)"""
+    # initialize environment
+    env: MiniGridEnv = gym.make(env_name, render_mode="rgb_array")
+    env = FullyObsWrapper(env)
+    obs = reset_env(env, seed)
+    writer.add_image(
+        f"{env_name}/learn_from_feedback_world", env.render(), dataformats="HWC"
+    )
+    world_grid = obs["image"]
+    print(f"Downstream env: {env_name}, using q model")
+    print_world_grid(world_grid)
+
+    # get ground truth q function
+    q_table = generate_q_table(env_name, world_grid, args.probe_q_threshold, args.alpha, args.gamma)
+
+    Q = np.zeros((env.width, env.height, N_DIRS, N_ACTIONS))
+    for episode in tqdm(
+        range(args.n_episodes), desc=f"Q-Learning from Q Model Episode"
+    ):
+        epsilon = q_learning_from_q_model_episode(
+            env, model, q_table, Q, episode, args, seed
+        )
+        cumulative_env_reward = q_learning_eval_episode(env, Q, seed)
+        fig = visualize_Q(Q)
+
+        writer.add_scalar(f"{env_name}/learn_from_feedback_epsilon", epsilon, episode)
+        writer.add_scalar(
+            f"{env_name}/learn_from_feedback_reward",
+            cumulative_env_reward,
+            episode,
+        )
+        writer.add_figure(f"{env_name}/learn_from_feedback_Q", fig, episode)
         plt.close(fig)
 
 
