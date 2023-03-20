@@ -136,16 +136,16 @@ class EndtoEndNet(nn.Module):
             return z
 
 
-def train_model(reward_data, feedback_data, all_reward, all_feedback, args, writer):
+def train_model(y_train, x_train, y_test, x_test, args, writer):
     device = args.device
-    reward_data = torch.from_numpy(reward_data).unsqueeze(1).float().to(device)
-    feedback_data = torch.from_numpy(feedback_data).unsqueeze(1).float().to(device)
-    all_reward = torch.from_numpy(all_reward).float().unsqueeze(1).to(device)
-    all_feedback = torch.from_numpy(all_feedback).unsqueeze(1).float().to(device)
+    y_train = torch.from_numpy(y_train).unsqueeze(1).float().to(device)
+    x_train = torch.from_numpy(x_train).unsqueeze(1).float().to(device)
+    y_test = torch.from_numpy(y_test).float().unsqueeze(1).to(device)
+    x_test = torch.from_numpy(x_test).unsqueeze(1).float().to(device)
 
     bsize = args.batch_size
-    train_n_batches = math.ceil(len(reward_data) / bsize)
-    test_n_batches = math.ceil(len(all_reward) / bsize)
+    train_n_batches = math.ceil(len(y_train) / bsize)
+    test_n_batches = math.ceil(len(y_test) / bsize)
     global_step = 0
 
     model = EndtoEndNet(1, 1, args.n_blocks, residual=args.residual, density=False)
@@ -157,26 +157,26 @@ def train_model(reward_data, feedback_data, all_reward, all_feedback, args, writ
     for epoch in tqdm(range(args.n_epochs), desc="Training Epochs", leave=True):
         # Train
         model.train()
-        train_r_pred = torch.empty((0, 1), device=device)
-        test_r_pred = torch.empty((0, 1), device=device)
+        train_y_pred = torch.empty((0, 1), device=device)
+        test_y_pred = torch.empty((0, 1), device=device)
         for batch in tqdm(
             range(train_n_batches), desc=f"epoch={epoch} train", leave=False
         ):
             start = batch * bsize
             end = start + bsize
-            if end > len(reward_data):
-                end = len(reward_data)
-            r = reward_data[start:end]
-            f = feedback_data[start:end]
+            if end > len(y_train):
+                end = len(y_train)
+            y = y_train[start:end]
+            x = x_train[start:end]
 
             optimzier.zero_grad()
-            r_pred = model(f)
-            loss = criterion(r_pred, r)
+            y_pred = model(x)
+            loss = criterion(y_pred, y)
 
             loss.backward()
             optimzier.step()
 
-            train_r_pred = torch.cat((train_r_pred, r_pred.detach()), dim=0)
+            train_y_pred = torch.cat((train_y_pred, y_pred.detach()), dim=0)
             writer.add_scalar("train/loss", loss.item(), global_step)
             global_step += 1
 
@@ -188,19 +188,19 @@ def train_model(reward_data, feedback_data, all_reward, all_feedback, args, writ
             ):
                 start = batch * bsize
                 end = start + bsize
-                if end > len(all_reward):
-                    end = len(all_reward)
-                r = all_reward[start:end]
-                f = all_feedback[start:end]
+                if end > len(y_test):
+                    end = len(y_test)
+                y = y_test[start:end]
+                x = x_test[start:end]
 
-                r_pred = model(f)
-                loss = criterion(r_pred, r)
+                y_pred = model(x)
+                loss = criterion(y_pred, y)
 
-                test_r_pred = torch.cat((test_r_pred, r_pred), dim=0)
+                test_y_pred = torch.cat((test_y_pred, y_pred), dim=0)
                 writer.add_scalar("test/loss", loss.item(), global_step)
 
-        writer.add_histogram("reward/reward_data_pred", train_r_pred, global_step)
-        writer.add_histogram("reward/all_reward_pred", test_r_pred, global_step)
+        writer.add_histogram("y/y_train_pred", train_y_pred, global_step)
+        writer.add_histogram("y/y_test_pred", test_y_pred, global_step)
 
     return model
 
