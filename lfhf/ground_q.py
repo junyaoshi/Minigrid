@@ -11,17 +11,22 @@ from minigrid.minigrid_env import MiniGridEnv
 from minigrid.wrappers import FullyObsWrapper
 
 from feedback import noisy_sigmoid_feedback
-from behavior import random_action, compute_coverage
-from reward import dijkstra, compute_reward, get_all_reward_samples
-from utils import print_world_grid, print_dist_to_goal, kl_divergence, str2bool
+from behavior import random_action
+from utils import print_world_grid, kl_divergence, str2bool, compute_coverage
 from model import train_model
-from q_learning import q_learning_from_reward_model, q_learning_from_env_reward, q_learning_from_q_model
-from q_iteration import generate_q_table
+from q_learning import (
+    q_value_iteration,
+    q_learning_from_env_reward,
+    q_learning_from_q_model,
+)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--log_dir", type=str, default="results_q/")
+    # run config
+    parser.add_argument("--log_dir", type=str, default="results_q")
+    parser.add_argument("--debug", type=str2bool, default=True)
 
     # probe env
     parser.add_argument("--probe_env", type=str, default="MiniGrid-Empty-5x5-v0")
@@ -46,8 +51,8 @@ def parse_args():
         nargs="+",
         default=[
             "MiniGrid-Empty-5x5-v0",
-            "MiniGrid-Empty-8x8-v0",
-            "MiniGrid-FourRooms-v0",
+            # "MiniGrid-Empty-8x8-v0",
+            # "MiniGrid-FourRooms-v0",
         ],
     )
     parser.add_argument("--n_episodes", type=int, default=100)
@@ -76,7 +81,6 @@ def generate_samples(env: MiniGridEnv, args, world_grid, q_table):
         visited.add((state, action))
 
         *_, terminated, truncated, _ = env.step(action)
-        next_state = (*env.agent_pos, env.agent_dir)
         q = q_table[state[0], state[1], state[2], action]
         q_data.append(q)
 
@@ -92,8 +96,13 @@ def generate_samples(env: MiniGridEnv, args, world_grid, q_table):
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
-    args.log_dir = f"{args.log_dir}probe={args.probe_env}_samples={args.n_probe_samples}"
-    args.log_dir += f"_noise={args.noise}"
+    if args.debug:
+        args.log_dir = f"{args.log_dir}/debug"
+    else:
+        args.log_dir = (
+            f"{args.log_dir}/probe={args.probe_env}_samples={args.n_probe_samples}"
+        )
+        args.log_dir += f"_noise={args.noise}"
     writer = SummaryWriter(args.log_dir)
 
     # log args
@@ -109,21 +118,21 @@ def main(args):
     writer.add_image("probe_env/initial_world", env.render(), dataformats="HWC")
     world_grid = obs["image"]
     print(f"Probe env: {args.probe_env}")
-    print_world_grid(world_grid)
 
     # generate q table
-    q_table = generate_q_table(args.probe_env, world_grid, args.probe_q_threshold, args.alpha, args.gamma)
-    # print(q_table)
-
-    # generate reward and feedback samples
-    # dist_to_goal = dijkstra(world_grid)
-    # all_reward = get_all_reward_samples(args.probe_env, dist_to_goal)
-    # np.random.shuffle(all_reward)
-    # all_feedback = noisy_sigmoid_feedback(all_reward, args.noise)
+    q_table = q_value_iteration(
+        args.probe_env,
+        world_grid,
+        args.probe_q_threshold,
+        args.alpha,
+        args.gamma,
+        writer,
+        probe_env=True,
+    )
 
     # generate q and feedback samples
     all_q = q_table.flatten()
-    all_q = all_q[np.nonzero(all_q)]
+    all_q = all_q[np.nonzero(all_q)]  # remove obstacle/goal q values
     np.random.shuffle(all_q)
     all_feedback = noisy_sigmoid_feedback(all_q, args.noise)
 
@@ -136,16 +145,14 @@ def main(args):
     print(f"KL Divergence between reward samples and ground truth: {kl_div:.4f}")
 
     # tensorboard logging
-    writer.add_histogram("q/all_q", all_q)
     writer.add_histogram("q/q_data", q_data)
+    writer.add_histogram("q/all_q", all_q)
     writer.add_histogram("feedback/feedback_data", feedback_data)
     writer.add_histogram("feedback/all_feedback", all_feedback)
     writer.add_text("stats/coverage", str(coverage))
     writer.add_text("stats/q_kl_div", str(kl_div))
 
-    model = train_model(
-        q_data, feedback_data, all_q, all_feedback, args, writer
-    )
+    model = train_model(q_data, feedback_data, all_q, all_feedback, args, writer)
 
     for downstream_env in args.downstream_envs:
         seed = np.random.randint(0, 500)
@@ -157,4 +164,5 @@ if __name__ == "__main__":
     args = parse_args()
     main(args)
     from time import sleep
+
     sleep(0.5)

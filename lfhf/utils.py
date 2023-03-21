@@ -20,12 +20,16 @@ world_grid[x_pos, y_pos] = [
 """
 from pprint import pprint
 import argparse
+import matplotlib
+
+matplotlib.use("Agg")
 
 import numpy as np
 from scipy.special import rel_entr
 
 from minigrid.core.constants import OBJECT_TO_IDX
 from minigrid.minigrid_env import MiniGridEnv
+
 
 N_DIRS = 4
 EAST, SOUTH, WEST, NORTH = range(N_DIRS)
@@ -80,7 +84,7 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError("Boolean value expected.")
-    
+
 
 def get_agent_state(env: MiniGridEnv):
     """Get the agent's state in the world grid."""
@@ -99,5 +103,47 @@ def hwc2chw(img):
     return np.transpose(img, axes=(2, 0, 1))
 
 
+def find_goal(world_grid):
+    width, height, _ = world_grid.shape
+    for i in range(width):
+        for j in range(height):
+            if world_grid[i, j, 0] == OBJECT_TO_IDX["goal"]:
+                return i, j
+    return None
+
+
+def find_agent(world_grid):
+    width, height, _ = world_grid.shape
+    for i in range(width):
+        for j in range(height):
+            if world_grid[i, j, 0] == OBJECT_TO_IDX["agent"]:
+                return i, j, world_grid[i, j, 2]
+    return None
+
+
+def compute_coverage(world_grid, visited):
+    """Computes coverage of the visited state, action pairs
+    over all state action pairs."""
+    assert isinstance(visited, set)
+    total = (
+        len(
+            [
+                cell[0]
+                for row in world_grid
+                for cell in row
+                if cell[0] != WALL and cell[0] != GOAL
+            ]
+        )
+        * N_DIRS
+        * N_ACTIONS
+    )
+    assert len(visited) <= total, "more visited states than possible states"
+    return len(visited) / total
+
+
 if __name__ == "__main__":
     pass
+
+
+
+

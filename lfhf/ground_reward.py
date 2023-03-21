@@ -11,15 +11,21 @@ from minigrid.minigrid_env import MiniGridEnv
 from minigrid.wrappers import FullyObsWrapper
 
 from feedback import noisy_sigmoid_feedback
-from behavior import random_action, compute_coverage
+from behavior import random_action
 from reward import dijkstra, compute_reward, get_all_reward_samples
-from utils import print_world_grid, print_dist_to_goal, kl_divergence, str2bool
+from utils import (
+    print_world_grid,
+    print_dist_to_goal,
+    kl_divergence,
+    str2bool,
+    compute_coverage,
+)
 from model import train_model
 from q_learning import (
     q_learning_from_reward_model,
     q_learning_from_env_reward,
     q_learning_from_feedback,
-    q_learning_from_true_reward
+    q_learning_from_true_reward,
 )
 
 
@@ -98,8 +104,12 @@ def generate_samples(env: MiniGridEnv, args, world_grid, dist_to_goal):
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
-    if not args.debug:
-        args.log_dir = f"{args.log_dir}/probe={args.probe_env}_samples={args.n_probe_samples}"
+    if args.debug:
+        args.log_dir = f"{args.log_dir}/debug"
+    else:
+        args.log_dir = (
+            f"{args.log_dir}/probe={args.probe_env}_samples={args.n_probe_samples}"
+        )
         args.log_dir += f"_noise={args.noise}"
     writer = SummaryWriter(args.log_dir)
 
