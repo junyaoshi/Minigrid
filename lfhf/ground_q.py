@@ -12,12 +12,16 @@ from minigrid.wrappers import FullyObsWrapper
 
 from feedback import noisy_sigmoid_feedback
 from behavior import random_action
-from utils import print_world_grid, kl_divergence, str2bool, compute_coverage
+from utils import kl_divergence, str2bool, compute_coverage, reset_env
 from model import train_model
 from q_learning import (
+    visualize_policy,
+    visualize_q_model_policy,
     q_value_iteration,
     q_learning_from_env_reward,
     q_learning_from_q_model,
+    q_learning_from_true_q,
+    q_learning_from_feedback_as_q,
 )
 
 
@@ -102,7 +106,7 @@ def main(args):
         args.log_dir = (
             f"{args.log_dir}/probe={args.probe_env}_samples={args.n_probe_samples}"
         )
-        args.log_dir += f"_noise={args.noise}"
+        args.log_dir += f"_epochs={args.n_epochs}_noise={args.noise}"
     writer = SummaryWriter(args.log_dir)
 
     # log args
@@ -110,17 +114,18 @@ def main(args):
     for arg in vars(args):
         writer.add_text(f"args/{str(arg)}", str(getattr(args, arg)))
 
+    seed = np.random.randint(0, 500)
     env: MiniGridEnv = gym.make(args.probe_env, render_mode="rgb_array")
     env = FullyObsWrapper(env)
-    obs, _ = env.reset()
+    obs = reset_env(env, seed)
 
     # visualize environment
-    writer.add_image("probe_env/initial_world", env.render(), dataformats="HWC")
+    writer.add_image("probe_env/world", env.render(), dataformats="HWC")
     world_grid = obs["image"]
     print(f"Probe env: {args.probe_env}")
 
-    # generate q table
-    q_table = q_value_iteration(
+    # generate ground truth Q
+    true_Q = q_value_iteration(
         args.probe_env,
         world_grid,
         args.probe_q_threshold,
@@ -129,14 +134,18 @@ def main(args):
         writer,
         probe_env=True,
     )
+    reset_env(env, seed)
+    writer.add_video(
+        "probe_env/q_value_iter_policy", visualize_policy(env, true_Q, seed)
+    )
 
     # generate q and feedback samples
-    all_q = q_table.flatten()
+    all_q = true_Q.flatten()
     all_q = all_q[np.nonzero(all_q)]  # remove obstacle/goal q values
     np.random.shuffle(all_q)
     all_feedback = noisy_sigmoid_feedback(all_q, args.noise)
 
-    q_data, coverage = generate_samples(env, args, world_grid, q_table)
+    q_data, coverage = generate_samples(env, args, world_grid, true_Q)
     np.random.shuffle(q_data)
     feedback_data = noisy_sigmoid_feedback(q_data, args.noise)
 
@@ -152,12 +161,43 @@ def main(args):
     writer.add_text("stats/coverage", str(coverage))
     writer.add_text("stats/q_kl_div", str(kl_div))
 
+    # train q model and visualize predicted Q and policy
     model = train_model(q_data, feedback_data, all_q, all_feedback, args, writer)
+    fig, vid_tensor = visualize_q_model_policy(env, model, true_Q, args, seed)
+    writer.add_figure("probe_env/q_model_pred_Q", fig)
+    writer.add_video("probe_env/q_model_policy", vid_tensor)
 
     for downstream_env in args.downstream_envs:
         seed = np.random.randint(0, 500)
-        q_learning_from_q_model(downstream_env, model, args, writer, seed)
-        q_learning_from_env_reward(downstream_env, args, writer, seed)
+
+        # initialize environment
+        env: MiniGridEnv = gym.make(downstream_env, render_mode="rgb_array")
+        env = FullyObsWrapper(env)
+        obs = reset_env(env, seed)
+        writer.add_image(f"{downstream_env}/world", env.render(), dataformats="HWC")
+        world_grid = obs["image"]
+        print(f"Downstream env: {downstream_env}")
+
+        # get ground truth q function
+        true_Q = q_value_iteration(
+            downstream_env,
+            world_grid,
+            args.probe_q_threshold,
+            args.alpha,
+            args.gamma,
+            writer,
+        )
+
+        q_learning_from_q_model(
+            env, downstream_env, world_grid, model, args, writer, seed, true_Q=true_Q
+        )
+        q_learning_from_true_q(
+            env, downstream_env, world_grid, args, writer, seed, true_Q=true_Q
+        )
+        q_learning_from_env_reward(env, downstream_env, args, writer, seed)
+        q_learning_from_feedback_as_q(
+            env, downstream_env, world_grid, args, writer, seed, true_Q=true_Q
+        )
 
 
 if __name__ == "__main__":

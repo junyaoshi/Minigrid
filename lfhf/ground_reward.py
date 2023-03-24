@@ -19,12 +19,13 @@ from utils import (
     kl_divergence,
     str2bool,
     compute_coverage,
+    reset_env
 )
 from model import train_model
 from q_learning import (
     q_learning_from_reward_model,
     q_learning_from_env_reward,
-    q_learning_from_feedback,
+    q_learning_from_feedback_as_reward,
     q_learning_from_true_reward,
 )
 
@@ -159,9 +160,18 @@ def main(args):
 
     for downstream_env in args.downstream_envs:
         seed = np.random.randint(0, 500)
+
+        # initialize environment
+        env: MiniGridEnv = gym.make(downstream_env, render_mode="rgb_array")
+        env = FullyObsWrapper(env)
+        obs = reset_env(env, seed)
+        writer.add_image(f"{downstream_env}/world", env.render(), dataformats="HWC")
+        world_grid = obs["image"]
+        print(f"Downstream env: {downstream_env}")
+
         q_learning_from_reward_model(downstream_env, model, args, writer, seed)
-        q_learning_from_feedback(downstream_env, args, writer, seed)
-        q_learning_from_env_reward(downstream_env, args, writer, seed)
+        q_learning_from_feedback_as_reward(downstream_env, args, writer, seed)
+        q_learning_from_env_reward(env, downstream_env, args, writer, seed)
         q_learning_from_true_reward(downstream_env, args, writer, seed)
 
 

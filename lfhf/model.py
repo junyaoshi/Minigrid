@@ -6,9 +6,11 @@ predicting-probability-distributions-using-neural-networks-abef7db10eac
 
 import math
 
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 import torch
 from torch import nn
+
+from utils import AverageMeter
 
 BN_TRACK_STATS = True
 AFFINE = True
@@ -154,7 +156,10 @@ def train_model(y_train, x_train, y_test, x_test, args, writer):
     criterion = nn.MSELoss()
     optimzier = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    for epoch in tqdm(range(args.n_epochs), desc="Training Epochs", leave=True):
+    pbar = trange(args.n_epochs, leave=True)
+    for epoch in pbar:
+        pbar.set_description(f"Model training epoch={epoch + 1}")
+
         # Train
         model.train()
         train_y_pred = torch.empty((0, 1), device=device)
@@ -182,6 +187,7 @@ def train_model(y_train, x_train, y_test, x_test, args, writer):
 
         # Test
         model.eval()
+        test_loss = AverageMeter()
         with torch.no_grad():
             for batch in tqdm(
                 range(test_n_batches), desc=f"epoch={epoch} test", leave=False
@@ -197,8 +203,10 @@ def train_model(y_train, x_train, y_test, x_test, args, writer):
                 loss = criterion(y_pred, y)
 
                 test_y_pred = torch.cat((test_y_pred, y_pred), dim=0)
-                writer.add_scalar("test/loss", loss.item(), global_step)
+                test_loss.update(loss.item(), y.size(0))
 
+        pbar.set_postfix({"test_loss": f"{test_loss.avg:.4f}"})
+        writer.add_scalar("test/loss", test_loss.avg, global_step)
         writer.add_histogram("y/y_train_pred", train_y_pred, global_step)
         writer.add_histogram("y/y_test_pred", test_y_pred, global_step)
 

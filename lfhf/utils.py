@@ -94,7 +94,9 @@ def get_agent_state(env: MiniGridEnv):
 def reset_env(env: MiniGridEnv, seed):
     """Reset the environment and return the initial state."""
     obs, _ = env.reset(seed=seed)
-    env.place_agent()
+    randint = np.random.randint(0, 500)
+    for _ in range(randint):
+        env.place_agent()
     return obs
 
 
@@ -141,9 +143,37 @@ def compute_coverage(world_grid, visited):
     return len(visited) / total
 
 
+class AverageMeter(object):
+    """Computes and stores running average of a scalar value."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.avg = 0
+        self.sum = 0
+        self.cnt = 0
+
+    def update(self, val, n=1):
+        self.sum += val * n
+        self.cnt += n
+        self.avg = self.sum / self.cnt
+
+
+class ArrayAverageMeter(object):
+    """Computes and stores running average of an array of values."""
+    def __init__(self, shape):
+        self.reset(shape)
+
+    def reset(self, shape):
+        self.avg = np.zeros(shape)
+        self.sum = np.zeros(shape)
+        self.cnt = np.zeros(shape)
+
+    def update(self, inds, val, n=1):
+        self.sum[inds] += val * n
+        self.cnt[inds] += n
+        self.avg[inds] = self.sum[inds] / self.cnt[inds]
+
+
 if __name__ == "__main__":
     pass
-
-
-
-

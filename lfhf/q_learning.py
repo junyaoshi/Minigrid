@@ -4,7 +4,7 @@ from copy import deepcopy
 from PIL import Image
 import numpy as np
 import gymnasium as gym
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 import torch
 import matplotlib.pyplot as plt
 
@@ -21,6 +21,7 @@ from utils import (
     reset_env,
     find_goal,
     compute_coverage,
+    ArrayAverageMeter,
     N_DIRS,
     N_ACTIONS,
     WALL,
@@ -116,10 +117,37 @@ def q_learning_from_reward_model_episode(
 
 
 def q_learning_from_q_model_episode(
-    env: MiniGridEnv, model, q_ground_truth, Q, episode, args, seed, visited
+    env: MiniGridEnv, model, true_Q, Q: ArrayAverageMeter, episode, args, seed, visited
 ):
-    """Perform one Q-Learning episode
-    where q comes from learned q model"""
+    """Perform one Q-Learning episode where q comes from learned q model"""
+    terminated, truncated = False, False
+    pbar = tqdm(total=env.max_steps, desc="Q-Learning Step", leave=False)
+
+    epsilon = choose_epsilon(args, episode)
+    while not (terminated or truncated):
+        state = get_agent_state(env)
+        action = choose_action(Q.avg, state, epsilon)
+        *_, terminated, truncated, _ = env.step(action)
+        visited.add((state, action))
+
+        # use q model to process feedback to get estimated Q
+        true_q = true_Q[state[0], state[1], state[2], action]
+        feedback = noisy_sigmoid_feedback(true_q, args.noise)
+        feedback = torch.tensor([[feedback]], device=args.device).float()
+        pred_q = model(feedback).item()
+        Q.update((state[0], state[1], state[2], action), pred_q)
+
+        pbar.update(1)
+
+    reset_env(env, seed)
+    pbar.close()
+    return epsilon, visited
+
+
+def q_learning_from_true_q_episode(
+    env: MiniGridEnv, true_Q, Q, episode, args, seed, visited
+):
+    """Perform one Q-Learning episode where q is ground truth q"""
     terminated, truncated = False, False
     pbar = tqdm(total=env.max_steps, desc="Q-Learning Step", leave=False)
 
@@ -130,12 +158,9 @@ def q_learning_from_q_model_episode(
         *_, terminated, truncated, _ = env.step(action)
         visited.add((state, action))
 
-        # use q model to process feedback to get estimated Q
-        true_q = q_ground_truth[state[0], state[1], state[2], action]
-        feedback = noisy_sigmoid_feedback(true_q, args.noise)
-        feedback = torch.tensor([[feedback]], device=args.device).float()
-        pred_q = model(feedback).item()
-        Q[state[0], state[1], state[2], action] = pred_q
+        # use true Q to update Q
+        true_q = true_Q[state[0], state[1], state[2], action]
+        Q[state[0], state[1], state[2], action] = true_q
 
         pbar.update(1)
 
@@ -197,6 +222,32 @@ def q_learning_from_feedback_episode(
     return epsilon
 
 
+def q_learning_from_feedback_as_q_episode(
+    env: MiniGridEnv, true_Q, Q: ArrayAverageMeter, episode, args, seed, visited
+):
+    """Perform one Q-Learning episode where feedback is used as Q"""
+    terminated, truncated = False, False
+    pbar = tqdm(total=env.max_steps, desc="Q-Learning Step", leave=False)
+
+    epsilon = choose_epsilon(args, episode)
+    while not (terminated or truncated):
+        state = get_agent_state(env)
+        action = choose_action(Q.avg, state, epsilon)
+        *_, terminated, truncated, _ = env.step(action)
+        visited.add((state, action))
+
+        # get noisy feedback and use it directly as Q
+        true_q = true_Q[state[0], state[1], state[2], action]
+        feedback = noisy_sigmoid_feedback(true_q, args.noise)
+        Q.update((state[0], state[1], state[2], action), feedback)
+
+        pbar.update(1)
+
+    reset_env(env, seed)
+    pbar.close()
+    return epsilon, visited
+
+
 def q_learning_from_env_reward_episode(env: MiniGridEnv, Q, episode, args, seed):
     """Perform one Q-Learning episode
     where reward comes from environment"""
@@ -248,7 +299,7 @@ def visualize_Q(Q):
 
 
 def visualize_policy(env: MiniGridEnv, Q, seed):
-    """Visualize policy."""
+    """Visualize policy extracted from a Q table."""
     vid_array = [hwc2chw(env.render())]
     terminated, truncated = False, False
     pbar = tqdm(total=env.max_steps, desc="Visualize Policy Step", leave=False)
@@ -264,6 +315,33 @@ def visualize_policy(env: MiniGridEnv, Q, seed):
 
     vid_array = np.stack(vid_array, axis=0)[np.newaxis, :]
     return torch.from_numpy(vid_array)
+
+
+def visualize_q_model_policy(env: MiniGridEnv, model, Q, args, seed):
+    """Visualize policy where Q table is predicted
+    using Q model q=model(feedback)"""
+    feedback = noisy_sigmoid_feedback(Q, args.noise)
+    feedback = torch.from_numpy(feedback).to(args.device).float()
+    pred_Q = model(feedback.flatten().unsqueeze(1))
+    pred_Q = pred_Q.detach().cpu().numpy().reshape(Q.shape)
+    pred_Q[Q == 0] = 0
+    fig = visualize_Q(pred_Q)
+
+    vid_array = [hwc2chw(env.render())]
+    terminated, truncated = False, False
+    pbar = tqdm(total=env.max_steps, desc="Visualize Policy Step", leave=False)
+    while not (terminated or truncated):
+        state = get_agent_state(env)
+        action = choose_optimal_action(pred_Q, state)
+        *_, terminated, truncated, _ = env.step(action)
+        vid_array.append(hwc2chw(env.render()))
+        pbar.update(1)
+
+    reset_env(env, seed)
+    pbar.close()
+
+    vid_array = np.stack(vid_array, axis=0)[np.newaxis, :]
+    return fig, torch.from_numpy(vid_array)
 
 
 def q_learning_from_reward_model(env_name, model, args, writer, seed):
@@ -319,7 +397,7 @@ def q_learning_from_true_reward(env_name, args, writer, seed):
     env = FullyObsWrapper(env)
     obs = reset_env(env, seed)
     writer.add_image(
-        f"{env_name}/learn_from_true_world", env.render(), dataformats="HWC"
+        f"{env_name}/learn_from_true_reward_world", env.render(), dataformats="HWC"
     )
     world_grid = obs["image"]
     print("Learning directly from true reward")
@@ -340,20 +418,22 @@ def q_learning_from_true_reward(env_name, args, writer, seed):
         cumulative_env_reward = q_learning_eval_episode(env, Q, seed)
         fig = visualize_Q(Q)
 
-        writer.add_scalar(f"{env_name}/learn_from_true_epsilon", epsilon, episode)
         writer.add_scalar(
-            f"{env_name}/learn_from_true_reward", cumulative_env_reward, episode
+            f"{env_name}/learn_from_true_reward_epsilon", epsilon, episode
         )
-        writer.add_figure(f"{env_name}/learn_from_true_Q", fig, episode)
+        writer.add_scalar(
+            f"{env_name}/learn_from_true_reward_reward", cumulative_env_reward, episode
+        )
+        writer.add_figure(f"{env_name}/learn_from_true_reward_Q", fig, episode)
         plt.close(fig)
 
     # visualize policy
     writer.add_video(
-        f"{env_name}/learn_from_true_policy", visualize_policy(env, Q, seed)
+        f"{env_name}/learn_from_true_reward_policy", visualize_policy(env, Q, seed)
     )
 
 
-def q_learning_from_feedback(env_name, args, writer, seed):
+def q_learning_from_feedback_as_reward(env_name, args, writer, seed):
     """Q-Learning where feedback is directly used as reward"""
     # initialize environment
     env: MiniGridEnv = gym.make(env_name, render_mode="rgb_array")
@@ -396,26 +476,19 @@ def q_learning_from_feedback(env_name, args, writer, seed):
     )
 
 
-def q_learning_from_env_reward(env_name, args, writer, seed):
+def q_learning_from_env_reward(env, env_name, args, writer, seed):
     """Q-Learning where reward comes from environment"""
-    # initialize environment
-    env: MiniGridEnv = gym.make(env_name, render_mode="rgb_array")
-    env = FullyObsWrapper(env)
-    reset_env(env, seed)
-    writer.add_image(
-        f"{env_name}/learn_from_env_world", env.render(), dataformats="HWC"
-    )
     print("Learning from environment reward")
-    print(f"Downstream env: {env_name}")
 
     Q = np.zeros((env.width, env.height, N_DIRS, N_ACTIONS))
-    for episode in tqdm(
-        range(args.n_episodes), desc="Q-Learning from Env Reward Episode"
-    ):
+    pbar = trange(args.n_episodes)
+    for episode in pbar:
+        pbar.set_description(f"Episode={episode + 1}")
         epsilon = q_learning_from_env_reward_episode(env, Q, episode, args, seed)
         cumulative_env_reward = q_learning_eval_episode(env, Q, seed)
         fig = visualize_Q(Q)
 
+        pbar.set_postfix({"rew": f"{cumulative_env_reward:.2f}"})
         writer.add_scalar(f"{env_name}/learn_from_env_epsilon", epsilon, episode)
         writer.add_scalar(
             f"{env_name}/learn_from_env_reward",
@@ -431,73 +504,160 @@ def q_learning_from_env_reward(env_name, args, writer, seed):
     )
 
 
-def q_learning_from_q_model(env_name, model, args, writer, seed):
+def q_learning_from_q_model(
+    env, env_name, world_grid, model, args, writer, seed, true_Q=None
+):
     """Q-Learning where reward comes from learned q model
     q = model(feedback)"""
-    # initialize environment
-    env: MiniGridEnv = gym.make(env_name, render_mode="rgb_array")
-    env = FullyObsWrapper(env)
-    obs = reset_env(env, seed)
-    writer.add_image(
-        f"{env_name}/learn_from_q_model_world", env.render(), dataformats="HWC"
-    )
-    world_grid = obs["image"]
     print("Learning from Q model")
-    print(f"Downstream env: {env_name}")
 
-    # get ground truth q function
-    q_table = q_value_iteration(
-        env_name, world_grid, args.probe_q_threshold, args.alpha, args.gamma, writer
-    )
-    visited = set()
-    Q = np.zeros((env.width, env.height, N_DIRS, N_ACTIONS))
-    for episode in tqdm(
-        range(args.n_episodes), desc=f"Q-Learning from Q Model Episode"
-    ):
-        epsilon, visited = q_learning_from_q_model_episode(
-            env, model, q_table, Q, episode, args, seed, visited
+    # get ground truth Q
+    if true_Q is None:
+        true_Q = q_value_iteration(
+            env_name, world_grid, args.probe_q_threshold, args.alpha, args.gamma, writer
         )
-        cumulative_env_reward = q_learning_eval_episode(env, Q, seed)
-        fig = visualize_Q(Q)
+
+    visited = set()
+    Q = ArrayAverageMeter((env.width, env.height, N_DIRS, N_ACTIONS))
+    pbar = trange(args.n_episodes)
+    for episode in pbar:
+        pbar.set_description(f"Episode={episode + 1}")
+        epsilon, visited = q_learning_from_q_model_episode(
+            env, model, true_Q, Q, episode, args, seed, visited
+        )
+        cumulative_env_reward = q_learning_eval_episode(env, Q.avg, seed)
+        fig = visualize_Q(Q.avg)
         q_coverage = compute_coverage(world_grid, visited)
 
+        pbar.set_postfix(
+            {"q_cover": f"{q_coverage:.2f}", "rew": f"{cumulative_env_reward:.2f}"}
+        )
         writer.add_scalar(f"{env_name}/learn_from_q_model_epsilon", epsilon, episode)
         writer.add_scalar(
             f"{env_name}/learn_from_q_model_reward",
             cumulative_env_reward,
             episode,
         )
-        writer.add_scalar(f"{env_name}/learn_from_q_model_coverage", q_coverage, episode)
+        writer.add_scalar(
+            f"{env_name}/learn_from_q_model_coverage", q_coverage, episode
+        )
         writer.add_figure(f"{env_name}/learn_from_q_model_Q", fig, episode)
         plt.close(fig)
 
     # visualize policy
     writer.add_video(
-        f"{env_name}/learn_from_q_model_policy", visualize_policy(env, Q, seed)
+        f"{env_name}/learn_from_q_model_policy", visualize_policy(env, Q.avg, seed)
     )
 
 
-def update_Q(world_grid, q_table, reward_table, width, height, alpha, gamma):
-    new_q_table = deepcopy(q_table)
-    for x in range(1, width - 1):
-        for y in range(1, height - 1):
+def q_learning_from_true_q(env, env_name, world_grid, args, writer, seed, true_Q=None):
+    """Q-Learning where reward comes from ground truth Q table"""
+    print("Learning from true Q")
+
+    # get ground truth Q
+    if true_Q is None:
+        true_Q = q_value_iteration(
+            env_name, world_grid, args.probe_q_threshold, args.alpha, args.gamma, writer
+        )
+
+    visited = set()
+    Q = np.zeros((env.width, env.height, N_DIRS, N_ACTIONS))
+    pbar = trange(args.n_episodes)
+    for episode in pbar:
+        pbar.set_description(f"Episode={episode + 1}")
+        epsilon, visited = q_learning_from_true_q_episode(
+            env, true_Q, Q, episode, args, seed, visited
+        )
+        cumulative_env_reward = q_learning_eval_episode(env, Q, seed)
+        fig = visualize_Q(Q)
+        q_coverage = compute_coverage(world_grid, visited)
+
+        pbar.set_postfix(
+            {"q_cover": f"{q_coverage:.2f}", "rew": f"{cumulative_env_reward:.2f}"}
+        )
+        writer.add_scalar(f"{env_name}/learn_from_true_q_epsilon", epsilon, episode)
+        writer.add_scalar(
+            f"{env_name}/learn_from_true_q_reward",
+            cumulative_env_reward,
+            episode,
+        )
+        writer.add_scalar(f"{env_name}/learn_from_true_q_coverage", q_coverage, episode)
+        writer.add_figure(f"{env_name}/learn_from_true_q_Q", fig, episode)
+        plt.close(fig)
+
+    # visualize policy
+    writer.add_video(
+        f"{env_name}/learn_from_true_q_policy", visualize_policy(env, Q, seed)
+    )
+
+
+def q_learning_from_feedback_as_q(
+    env, env_name, world_grid, args, writer, seed, true_Q=None
+):
+    """Q-Learning where feedback is directly used as q"""
+    print("Learning directly from feedback as Q")
+
+    # get ground truth Q
+    if true_Q is None:
+        true_Q = q_value_iteration(
+            env_name, world_grid, args.probe_q_threshold, args.alpha, args.gamma, writer
+        )
+
+    visited = set()
+    Q = ArrayAverageMeter((env.width, env.height, N_DIRS, N_ACTIONS))
+    pbar = trange(args.n_episodes)
+    for episode in pbar:
+        pbar.set_description(f"Episode={episode + 1}")
+        epsilon, visited = q_learning_from_feedback_as_q_episode(
+            env, true_Q, Q, episode, args, seed, visited
+        )
+        cumulative_env_reward = q_learning_eval_episode(env, Q.avg, seed)
+        fig = visualize_Q(Q.avg)
+        q_coverage = compute_coverage(world_grid, visited)
+
+        pbar.set_postfix(
+            {"q_cover": f"{q_coverage:.2f}", "rew": f"{cumulative_env_reward:.2f}"}
+        )
+        writer.add_scalar(
+            f"{env_name}/learn_from_feedback_as_q_epsilon", epsilon, episode
+        )
+        writer.add_scalar(
+            f"{env_name}/learn_from_feedback_as_q_reward",
+            cumulative_env_reward,
+            episode,
+        )
+        writer.add_scalar(
+            f"{env_name}/learn_from_feedback_as_q_coverage", q_coverage, episode
+        )
+        writer.add_figure(f"{env_name}/learn_from_feedback_as_q_Q", fig, episode)
+        plt.close(fig)
+
+    # visualize policy
+    writer.add_video(
+        f"{env_name}/learn_from_feedback_as_q_policy", visualize_policy(env, Q.avg, seed)
+    )
+
+
+def update_Q(world_grid, Q, R, alpha, gamma):
+    """Perform one iteration of the Q-value Iteration algorithm"""
+    width, height, _ = world_grid.shape
+    new_Q = deepcopy(Q)
+    for x in range(width):
+        for y in range(height):
             for dir in range(N_DIRS):
                 for action in range(N_ACTIONS):
                     if world_grid[x, y, 0] == WALL or world_grid[x, y, 0] == GOAL:
                         continue
                     new_x, new_y, new_dir = step(world_grid, (x, y, dir), action)
 
-                    q_values_of_state = q_table[new_x, new_y, new_dir, :]
+                    q_values_of_state = Q[new_x, new_y, new_dir, :]
                     max_q_value_in_new_state = max(q_values_of_state)
-                    current_q_value = q_table[x, y, dir, action]
-                    new_q_table[x, y, dir, action] = (
-                        1 - alpha
-                    ) * current_q_value + alpha * (
-                        reward_table[x, y, dir, action]
-                        + gamma * max_q_value_in_new_state
+                    current_q_value = Q[x, y, dir, action]
+                    new_Q[x, y, dir, action] = (1 - alpha) * current_q_value + alpha * (
+                        R[x, y, dir, action] + gamma * max_q_value_in_new_state
                     )
 
-    return new_q_table
+    return new_Q
 
 
 def q_value_iteration(
@@ -511,16 +671,18 @@ def q_value_iteration(
     Q = np.zeros((width, height, N_DIRS, N_ACTIONS))
     R = generate_reward_table(world_grid)
 
-    pbar = tqdm(desc="Q-Value Iteration", total=10000)
+    pbar = trange(10000)
     q_diff = np.inf
     step = 0
     while q_diff > q_threshold:
-        new_Q = update_Q(world_grid, Q, R, width, height, alpha, gamma)
+        pbar.set_description(f"Q-Value iteration step={step + 1}")
+        new_Q = update_Q(world_grid, Q, R, alpha, gamma)
         q_diff = np.sum(np.absolute(new_Q - Q))
         Q = new_Q
 
         step += 1
         pbar.update(1)
+        pbar.set_postfix({"q_diff": f"{q_diff:.5f}"})
         writer.add_scalar(f"{env_name}/q_value_iter_diff", q_diff, step)
         if step % 10 == 0:
             fig = visualize_Q(Q)
