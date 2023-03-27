@@ -140,17 +140,23 @@ class EndtoEndNet(nn.Module):
 
 def train_model(y_train, x_train, y_test, x_test, args, writer):
     device = args.device
-    y_train = torch.from_numpy(y_train).unsqueeze(1).float().to(device)
-    x_train = torch.from_numpy(x_train).unsqueeze(1).float().to(device)
-    y_test = torch.from_numpy(y_test).float().unsqueeze(1).to(device)
-    x_test = torch.from_numpy(x_test).unsqueeze(1).float().to(device)
+    if x_train.ndim == 1:
+        y_train = torch.from_numpy(y_train).unsqueeze(1).float().to(device)
+        x_train = torch.from_numpy(x_train).unsqueeze(1).float().to(device)
+        y_test = torch.from_numpy(y_test).float().unsqueeze(1).to(device)
+        x_test = torch.from_numpy(x_test).unsqueeze(1).float().to(device)
+    else:
+        y_train = torch.from_numpy(y_train).float().to(device)
+        x_train = torch.from_numpy(x_train).float().to(device)
+        y_test = torch.from_numpy(y_test).float().to(device)
+        x_test = torch.from_numpy(x_test).float().to(device)
 
     bsize = args.batch_size
     train_n_batches = math.ceil(len(y_train) / bsize)
     test_n_batches = math.ceil(len(y_test) / bsize)
     global_step = 0
 
-    model = EndtoEndNet(1, 1, args.n_blocks, residual=args.residual, density=False)
+    model = EndtoEndNet(x_train.shape[1], 1, args.n_blocks, residual=args.residual, density=False)
     model.to(device)
 
     criterion = nn.MSELoss()

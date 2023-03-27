@@ -10,7 +10,7 @@ import torch
 from minigrid.minigrid_env import MiniGridEnv
 from minigrid.wrappers import FullyObsWrapper
 
-from feedback import noisy_sigmoid_feedback
+from feedback import generate_feedback
 from behavior import random_action
 from utils import kl_divergence, str2bool, compute_coverage, reset_env
 from model import train_model
@@ -70,6 +70,7 @@ def parse_args():
     )
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--alpha", type=float, default=0.1)
+    parser.add_argument("--hd_feedback", type=str, default="base2")
 
     args = parser.parse_args()
     return args
@@ -143,11 +144,12 @@ def main(args):
     all_q = true_Q.flatten()
     all_q = all_q[np.nonzero(all_q)]  # remove obstacle/goal q values
     np.random.shuffle(all_q)
-    all_feedback = noisy_sigmoid_feedback(all_q, args.noise)
+    all_feedback = generate_feedback(all_q, args.noise, args.hd_feedback)
+
 
     q_data, coverage = generate_samples(env, args, world_grid, true_Q)
     np.random.shuffle(q_data)
-    feedback_data = noisy_sigmoid_feedback(q_data, args.noise)
+    feedback_data = generate_feedback(q_data, args.noise, args.hd_feedback)
 
     kl_div = kl_divergence(q_data, all_q)
     print(f"State x Action space coverage: {coverage:.4f}")

@@ -36,7 +36,7 @@ from utils import (
 )
 from reward import dijkstra, compute_reward
 from behavior import random_action
-from feedback import noisy_sigmoid_feedback
+from feedback import generate_feedback
 
 
 EPSILON = 0.05
@@ -104,8 +104,11 @@ def q_learning_from_reward_model_episode(
 
         # use reward model to process feedback to get estimated reward and update Q
         true_reward = compute_reward(dist_to_goal, state, new_state)
-        feedback = noisy_sigmoid_feedback(true_reward, args.noise)
-        feedback = torch.tensor([[feedback]], device=args.device).float()
+        feedback = generate_feedback(true_reward, args.noise, args.hd_feedback)
+        if args.hd_feedback == "base2":
+            feedback = torch.tensor([feedback], device=args.device).float()
+        else:
+            feedback = torch.tensor([[feedback]], device=args.device).float()
         pred_reward = model(feedback).item()
         bellman_update(Q, state, pred_reward, new_state, action, args.alpha, args.gamma)
 
@@ -132,8 +135,11 @@ def q_learning_from_q_model_episode(
 
         # use q model to process feedback to get estimated Q
         true_q = true_Q[state[0], state[1], state[2], action]
-        feedback = noisy_sigmoid_feedback(true_q, args.noise)
-        feedback = torch.tensor([[feedback]], device=args.device).float()
+        feedback = generate_feedback(true_q, args.noise, args.hd_feedback)
+        if args.hd_feedback == "base2":
+            feedback = torch.tensor([feedback], device=args.device).float()
+        else:
+            feedback = torch.tensor([[feedback]], device=args.device).float()
         pred_q = model(feedback).item()
         Q.update((state[0], state[1], state[2], action), pred_q)
 
@@ -212,7 +218,7 @@ def q_learning_from_feedback_episode(
 
         # get noisy feedback and use it directly as reward to update Q
         true_reward = compute_reward(dist_to_goal, state, new_state)
-        feedback = noisy_sigmoid_feedback(true_reward, args.noise)
+        feedback = generate_feedback(true_reward, args.noise)
         bellman_update(Q, state, feedback, new_state, action, args.alpha, args.gamma)
 
         pbar.update(1)
@@ -238,7 +244,7 @@ def q_learning_from_feedback_as_q_episode(
 
         # get noisy feedback and use it directly as Q
         true_q = true_Q[state[0], state[1], state[2], action]
-        feedback = noisy_sigmoid_feedback(true_q, args.noise)
+        feedback = generate_feedback(true_q, args.noise)
         Q.update((state[0], state[1], state[2], action), feedback)
 
         pbar.update(1)
@@ -320,9 +326,16 @@ def visualize_policy(env: MiniGridEnv, Q, seed):
 def visualize_q_model_policy(env: MiniGridEnv, model, Q, args, seed):
     """Visualize policy where Q table is predicted
     using Q model q=model(feedback)"""
-    feedback = noisy_sigmoid_feedback(Q, args.noise)
+    feedback = generate_feedback(Q, args.noise, args.hd_feedback)
     feedback = torch.from_numpy(feedback).to(args.device).float()
-    pred_Q = model(feedback.flatten().unsqueeze(1))
+    print(feedback.shape)
+    if args.hd_feedback == "base2":
+        reshaped_feedback = feedback.view(-1, feedback.shape[-1])
+        pred_Q = model(reshaped_feedback)
+        print(reshaped_feedback.shape)
+    else:
+        pred_Q = model(feedback.flatten().unsqueeze(1))
+
     pred_Q = pred_Q.detach().cpu().numpy().reshape(Q.shape)
     pred_Q[Q == 0] = 0
     fig = visualize_Q(pred_Q)

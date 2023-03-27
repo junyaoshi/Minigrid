@@ -10,7 +10,7 @@ import torch
 from minigrid.minigrid_env import MiniGridEnv
 from minigrid.wrappers import FullyObsWrapper
 
-from feedback import noisy_sigmoid_feedback
+from feedback import generate_feedback
 from behavior import random_action
 from reward import dijkstra, compute_reward, get_all_reward_samples
 from utils import (
@@ -74,6 +74,7 @@ def parse_args():
     )
     parser.add_argument("--gamma", type=float, default=0.95)
     parser.add_argument("--alpha", type=float, default=0.1)
+    parser.add_argument("--hd_feedback", type=str, default="base2")
 
     args = parser.parse_args()
     return args
@@ -136,11 +137,11 @@ def main(args):
     # generate reward and feedback samples
     all_reward = get_all_reward_samples(args.probe_env, dist_to_goal)
     np.random.shuffle(all_reward)
-    all_feedback = noisy_sigmoid_feedback(all_reward, args.noise)
+    all_feedback = generate_feedback(all_reward, args.noise, args.hd_feedback)
 
     reward_data, coverage = generate_samples(env, args, world_grid, dist_to_goal)
     np.random.shuffle(reward_data)
-    feedback_data = noisy_sigmoid_feedback(reward_data, args.noise)
+    feedback_data = generate_feedback(reward_data, args.noise, args.hd_feedback)
 
     kl_div = kl_divergence(reward_data, all_reward)
     print(f"State x Action space coverage: {coverage:.4f}")
