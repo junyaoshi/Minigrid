@@ -55,8 +55,8 @@ def parse_args():
         nargs="+",
         default=[
             "MiniGrid-Empty-5x5-v0",
-            # "MiniGrid-Empty-8x8-v0",
-            # "MiniGrid-FourRooms-v0",
+            "MiniGrid-Empty-8x8-v0",
+            "MiniGrid-FourRooms-v0",
         ],
     )
     parser.add_argument("--n_episodes", type=int, default=100)
